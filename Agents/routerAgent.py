@@ -1,0 +1,431 @@
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from Tools.validator import sanitize_input
+from config import Config
+import os 
+import json
+
+class RouteDecision(BaseModel):
+    """Structured output for routing decision"""
+    agent: str = Field(description = "The target agent: 'menu', 'order','upselling','finalization', 'delivery', 'human'")
+    confidence: float = Field(description = "Confidence score between 0 and 1")
+    extracted_items: List[Dict[str, Any]] = Field(
+        default_factory = list,
+        description = "List of items extracted from user input with wuantities and specifications"
+    )
+    user_intent: str = Field(description = "Clear description of what user wants")
+    needs_clarification: bool = Field(default = False, description = "Whether input needs clarification")
+    clarification_question: Optional[str] = Field(default = None, description = "Whether input needs clarification")
+    delivery_method: Optional[str] = Field(default=None, description="Delivery method if detected: 'delivery' or 'pickup'")
+    wants_order_change: bool = Field(default=False, description="Whether user wants to modify order instead of answering delivery question")
+
+class MultipleItemExtraction(BaseModel):
+    """Structured output for multiple output extraction"""
+    items: List[Dict[str, Any]] = Field(
+        default_factory = list,
+        description = "List of extracted items with details"
+    )
+    success: bool = Field(description = "whether extraction was successful")
+    message: str = Field(description = "Summary message about what was extracted")
+
+class RouterAgent:
+    def __init__(self, llm = None, menu_data = None):
+        self.llm = ChatOllama(
+            model = Config.MODEL_NAME,
+            temperature = 0.3
+        )
+
+        self.menu_data = menu_data or self._load_menu()
+
+        # Set up for output parsers
+        self.router_parser = PydanticOutputParser(pydantic_object = RouteDecision)
+        self.multiple_item_parser = PydanticOutputParser(pydantic_object = MultipleItemExtraction)
+
+        # Create the main routing prompt
+        self.routing_prompt = PromptTemplate(
+            input_variables=["user_input", "conversation_context", "menu_items"],
+            partial_variables={"format_instructions": self.route_parser.get_format_instructions()},
+            template="""
+You are an expert Router Agent for an AI restaurant assistant. Your job is to analyze user input and make intelligent routing decisions.
+
+Available Menu Items:
+{menu_items}
+
+Current Conversation Context:
+{conversation_context}
+
+User Input: "{user_input}"
+
+Analyze the user input and determine:
+
+1. **Intent Classification**: What does the user want to do?
+   - BROWSE_MENU: User wants to see menu, get recommendations, or learn about items
+   - PLACE_ORDER: User wants to order specific items
+   - MODIFY_ORDER: User wants to change existing order (remove items, change quantity, add notes)
+   - FINALIZE_ORDER: User is done ordering and wants to complete/pay
+   - DELIVERY_METHOD: User is answering delivery/pickup question
+   - ASK_QUESTION: User has general questions about food, ingredients, etc.
+   - UNCLEAR: Input is ambiguous and needs clarification
+
+2. **Agent Routing**: Route to appropriate agent:
+   - menu: For browsing, recommendations, item information
+   - order: For placing orders, item extraction, customizations, and modifications
+   - upselling: When order is placed and upselling is appropriate
+   - finalization: When user indicates they're done ordering
+   - delivery: For handling delivery questions and confirmations
+   - human: For complex issues, complaints, or unclear requests
+
+3. **Delivery Method Detection**: If user is responding to delivery question:
+   - "delivery", "deliver", "delivered" → delivery_method: "delivery"
+   - "pickup", "pick up", "takeaway", "take away" → delivery_method: "pickup"
+   - If user mentions adding items instead → wants_order_change: true, agent: "order"
+   - If user wants to cancel → wants_order_change: true, agent: "finalization"
+   - If user wants to remove/change items → wants_order_change: true, agent: "order", user_intent: "MODIFY_ORDER"
+
+4. **Intelligent Matching**: For order requests, note items mentioned but don't extract them here:
+   - "coc" or "coca" likely means "Coca Cola"
+   - "burger" could mean "Classic Burger"
+   - "pizza" could mean "Margherita Pizza"
+   - "cheesecake" could mean "New York Cheesecake"
+
+5. **Context Awareness**: Consider conversation stage:
+   - If context shows we're waiting for delivery method and user says anything about ordering or modifying → wants_order_change: true
+   - If context shows we're finalizing and user gives clear delivery preference → agent: "delivery"
+   - If user says "add", "more", "another", "also want" during delivery stage → wants_order_change: true
+
+IMPORTANT: 
+- Do NOT include extracted_items in your response. Set extracted_items to an empty list []. 
+- Item extraction will be handled separately by the Order Agent.
+- Always check if user wants to modify order when delivery method is being asked
+
+{format_instructions}
+
+Be intelligent about context and provide structured, actionable routing decisions.
+"""
+        )
+        
+        # Simplified item extraction prompt for multiple items
+        self.item_extraction_prompt = PromptTemplate(
+            input_variables=["user_input", "menu_items"],
+            partial_variables={"format_instructions": self.multi_item_parser.get_format_instructions()},
+            template="""
+You are an expert at extracting menu items from natural language input.
+
+Available Menu Items:
+{menu_items}
+
+User Input: "{user_input}"
+
+Extract ALL items mentioned in the user input. Use intelligent matching:
+
+Examples:
+- "coc" or "coca" → "Coca Cola"
+- "burger" → "Classic Burger"
+- "cheesecake" → "New York Cheesecake"
+- "vanilla ice cream" → "Vanilla Ice Cream"
+- "2 wings" → "Buffalo Wings" with quantity 2
+- "pizza no mushrooms" → "Margherita Pizza" with customization "no mushrooms"
+- "I want 3 burgers and 2 cokes" → Extract both items with quantities
+
+For each item found, create a dictionary with:
+- item_name: Exact menu item name or closest match
+- quantity: Number requested (default 1)
+- customizations: List of any customizations mentioned
+- confidence: Confidence score 0-1
+- alternatives: List of alternative matches if confidence is low
+
+{format_instructions}
+
+Extract ALL items mentioned, not just one.
+"""
+        )
+
+        self.routing_chain = self.routing_prompt | self.llm | self.router_parser
+        self.extraction_chain = self.item_extraction_prompt | self.llm | self.multiple_item_parser
+
+    def _load_menu(self):
+        """Load menu data for intelligent matching"""
+        try:
+            menu_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'menu.json')
+            with open(menu_file, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+            
+    def _format_menu_for_prompt(self):
+        """Format menu items for prompt context"""
+        items = []
+        # Handle menu as a list of items (not a dict)
+        if isinstance(self.menu_data, list):
+            for item in self.menu_data:
+                items.append(f"- {item['name']}: {item['description']} (${item['price']})")
+        elif isinstance(self.menu_data, dict):
+            # Handle dict format (categorized menu)
+            for category, category_items in self.menu_data.items():
+                if isinstance(category_items, list):
+                    for item in category_items:
+                        items.append(f"- {item['name']}: {item['description']} (${item['price']})")
+        return "\n".join(items)
+    
+    def route_conversation(self, user_input: str, conversation_context: dict = None) ->RouteDecision:
+        """Main routing function - analyzes input and returns structured routing decision"""
+        sanitize_input = sanitize_input(user_input)
+
+        if conversation_context is None:
+            conversation_context = {
+                "current_order": [],
+                "conversation_stage": "greetings",
+                "order_total": 0.0
+            }
+
+        try:
+            menu_context = self._format_menu_for_prompt()
+            context_str = json.dumps(conversation_context, indent = 2)
+            route_decision: RouteDecision = self.routing_chain.invoke(
+                {
+                    "user_input": sanitize_input,
+                    "conversation_context": context_str,
+                    "menu_items": menu_context
+                }
+            )
+            if route_decision.agent == "order":
+                extracted_items = self.extract_multiple_items(sanitize_input)
+                route_decision.extracted_items = extracted_items
+
+            return route_decision
+
+        except Exception as e:
+            return self._fallback_routing(sanitize_input, conversation_context)
+
+    def extract_multiple_items(self, user_input: str) -> List[Dict[str, Any]]:
+        """Extract multiple items with detailed analysis using simplified approach"""
+        try:
+            menu_context = self._format_menu_for_prompt()
+
+            extraction_result: MultipleItemExtraction = self.extraction_chain.invoke(
+                {
+                    "user_input": user_input,
+                    "menu_items": menu_context
+                }
+            )        
+
+            return extraction_result.items
+        
+        except Exception as e:
+            return self._manual_item_extraction(user_input)
+        
+    def _manual_item_extraction(self, user_input: str) -> List[Dict[str, Any]]:
+        """Manual fallback item extraction"""
+        input_lower = user_input.lower()
+        extracted_items = []
+        
+        intelligent_matches = {
+            "cheesecake": {"name": "New York Cheesecake", "price": 6.99},
+            "vanilla ice cream": {"name": "Vanilla Ice Cream", "price": 4.99},
+            "ice cream": {"name": "Vanilla Ice Cream", "price": 4.99},
+            "burger": {"name": "Classic Burger", "price": 12.99},
+            "pizza": {"name": "Margherita Pizza", "price": 14.99},
+            "coc": {"name": "Coca Cola", "price": 2.99},
+            "coca": {"name": "Coca Cola", "price": 2.99},
+            "cola": {"name": "Coca Cola", "price": 2.99},
+            "wings": {"name": "Buffalo Wings", "price": 8.99},
+            "pasta": {"name": "Pasta Carbonara", "price": 16.99},
+            "salmon": {"name": "Grilled Salmon", "price": 19.99}
+        }
+        
+        import re
+        quantity_patterns = [
+            r'(\d+)\s+([a-zA-Z\s]+)',  # "2 burgers"
+            r'(one|two|three|four|five)\s+([a-zA-Z\s]+)',  # "one burger"
+        ]
+        
+        found_items = {}
+        
+        for pattern in quantity_patterns:
+            matches = re.findall(pattern, input_lower)
+            for match in matches:
+                qty_str, item_name = match
+                try:
+                    quantity = int(qty_str)
+                except:
+                    word_to_num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+                    quantity = word_to_num.get(qty_str, 1)
+                
+                for key, menu_item in intelligent_matches.items():
+                    if key in item_name:
+                        found_items[menu_item["name"]] = {
+                            "item_name": menu_item["name"],
+                            "quantity": quantity,
+                            "customizations": [],
+                            "confidence": 0.8,
+                            "alternatives": [],
+                            "price": menu_item["price"]
+                        }
+        
+        for key, menu_item in intelligent_matches.items():
+            if key in input_lower and menu_item["name"] not in found_items:
+                found_items[menu_item["name"]] = {
+                    "item_name": menu_item["name"],
+                    "quantity": 1,
+                    "customizations": [],
+                    "confidence": 0.8,
+                    "alternatives": [],
+                    "price": menu_item["price"]
+                }
+        
+        return list(found_items.values())
+
+
+    def _fallback_routing(self, user_input: str, conversation_context: dict) -> RouteDecision:
+        """Fallback routing when AI parsing fails"""
+        input_lower = user_input.lower()
+
+        if conversation_context.get("conversation_stage") =="awaiting_delivery":
+            if any(word in input_lower for word in ["delivery","deliver","delivered"]):
+                return RouteDecision(
+                    agent="delivery",
+                    confidence=0.8,
+                    user_intent="DELIVERY_METHOD",
+                    delivery_method="delivery",
+                    extracted_items=[],
+                    needs_clarification=False 
+                )
+            elif any(word in input_lower for word in ['pickup', 'pick up', 'takeaway', 'take away']):
+                return RouteDecision(
+                    agent="delivery",
+                    confidence=0.8,
+                    user_intent="DELIVERY_METHOD",
+                    delivery_method="pickup",
+                    extracted_items=[],
+                    needs_clarification=False
+                )
+            # Modification intents during delivery question
+            elif any(word in input_lower for word in ['add', 'more', 'another', 'also', 'want', 'order']):
+                return RouteDecision(
+                    agent="order",
+                    confidence=0.7,
+                    user_intent="MODIFY_ORDER",
+                    wants_order_change=True,
+                    extracted_items=self._manual_item_extraction(user_input),
+                    needs_clarification=False
+                )
+            elif any(word in input_lower for word in ['remove', 'delete', 'take off', 'drop', 'change', 'reduce']):
+                return RouteDecision(
+                    agent="order",
+                    confidence=0.75,
+                    user_intent="MODIFY_ORDER",
+                    wants_order_change=True,
+                    extracted_items=self._manual_item_extraction(user_input),
+                    needs_clarification=False
+                )
+            elif any(word in input_lower for word in ['cancel', 'stop', 'nevermind', 'forget']):
+                return RouteDecision(
+                    agent="finalization",
+                    confidence=0.8,
+                    user_intent="CANCEL_ORDER",
+                    wants_order_change=True,
+                    extracted_items=[],
+                    needs_clarification=False
+                )
+        if any(word in input_lower for word in ['menu', 'see', 'show', 'what', 'have']):
+            agent = "menu"
+            intent = "BROWSE_MENU"
+        elif any(word in input_lower for word in ['order', 'want', 'get', 'buy', 'take']):
+            agent = "order"
+            intent = "PLACE_ORDER"
+        elif any(word in input_lower for word in ['remove', 'delete', 'take off', 'drop', 'change', 'reduce']):
+            agent = "order"
+            intent = "MODIFY_ORDER"
+        elif any(word in input_lower for word in ['done', 'finish', 'complete', 'pay', 'checkout']):
+            agent = "finalization"
+            intent = "FINALIZE_ORDER"
+        else:
+            agent = "menu"
+            intent = "ASK_QUESTION"
+
+        extracted_items = []
+        if agent =="order" and intent != "MODIFY_ORDER":
+            extracted_items = self._manual_item_extraction(user_input)
+
+        return RouteDecision(
+            agent = agent,
+            confidence = 0.6,
+            user_intent = intent,
+            extracted_items = extract_items,
+            needs_clarification = False
+        )
+    
+    def analyze_ambiguou_input(self, user_input: str) -> Dict[str, Any]:
+        """Analyze unclear input and suggest clarifications"""
+        ambiguity_prompt = PromptTemplate(
+            input_variables=["user_input", "menu_items"],
+            template="""
+User said: "{user_input}"
+
+Available menu items:
+{menu_items}
+
+This input seems ambiguous. Analyze what the user might mean and suggest clarifying questions.
+
+Return a JSON with:
+- possible_meanings: List of possible interpretations
+- clarifying_question: A helpful question to ask the user
+- suggested_items: Menu items that might match
+
+Be helpful and specific in your suggestions.
+"""
+        )
+
+        try:
+            chain = ambiguity_prompt |self.llm| StrOutputParser()
+            response_text = chain.invoke({
+                "user_input":user_input,
+                "menu_items": self._format_menu_for_prompt()
+            })
+
+            return json.loads(response_text)
+        
+        except:
+            return {
+                "possible_meanings": ["Could be menu browsing", "Could be placing an order"],
+                "clarifying_question": "What would you like to do today?",
+                "suggested_items": []
+            }
+        
+    def get_intelligent_suggestions(self, partial_input: str) -> List[str]:
+        """Get intelligent suggestions for partial/unclear input"""
+        suggestion_prompt = PromptTemplate(
+            input_variables=["partial_input", "menu_items"],
+            template="""
+User typed: "{partial_input}"
+
+Menu items available:
+{menu_items}
+
+Provide intelligent suggestions for what the user might be looking for.
+Consider:
+- Partial matches (e.g., "burg" → "Classic Burger")
+- Common abbreviations (e.g., "coc" → "Coca Cola")
+- Similar sounding items
+- Popular items
+
+Return up to 5 suggestions as a simple list.
+"""
+        )
+
+        try:
+            chain = suggestion_prompt | self.llm | StrOutputParser()
+            response_text = chain.invoke({
+                "partial_input": partial_input,
+                "menu_items": self._format_menu_for_prompt()
+            })
+            
+            # Parse suggestions from response
+            suggestions = [line.strip("- ").strip() for line in response_text.split("\n") if line.strip()]
+            return suggestions[:5]
+        except:
+            return ["Browse our menu", "See popular items", "Get recommendations"]
