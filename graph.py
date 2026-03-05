@@ -26,7 +26,6 @@ class RestaurantGraph:
     def build_graph(self):
         """Build the conversation flow graph showing Router Agent as central hub"""
         workflow = StateGraph(RestaurantState)
-        # Router node
         workflow.add_node("router_agent", self._router_agent_node)
         workflow.add_node("menu_agent",self._menu_agent_node)
         workflow.add_node("upselling_agent", self._upselling_agent_node)
@@ -274,3 +273,22 @@ class RestaurantGraph:
             return "greeting"
         
         return agent_mapping.get(target_agent, "menu_agent")
+    
+    def _route_back_to_router(self, state: RestaurantState) -> str:
+        """Route back to router unless conversation is complete"""
+        if (state.get("conversation_stage") == "complete" or
+            state.get("customer_intent") =="COMPLETED" or 
+            state.get("order_total", 0) > 0 and state.get("delivery_method")):
+            return "completion"
+        
+        if (state.get("needs_intervention") or
+            state.get("customer_intent") == "HUMAN_NEEDED"):
+            return "human_intervention"
+        
+        return "router_agent"
+
+    def _needs_human_intervention(self, state: RestaurantState) -> bool:
+        """Check if human intervention is needed"""
+        if hasattr(self.coordinator, 'shared_memory'):
+            return self.coordinator.shared_memory.needs_human_intervention
+        return state.get("needs_intervention", False)

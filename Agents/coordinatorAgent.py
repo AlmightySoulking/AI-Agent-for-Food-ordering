@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 from langchain_ollama import ChatOllama
 from Agents.menuAgent import MenuAgent
 from Agents.orderAgent import OrderAgent
@@ -6,7 +10,6 @@ from Agents.upsellingAgent import UpsellingAgent
 from SharedMemory import SharedMemory
 from Tools.validator import sanitize_input
 from config import Config
-import os
 import uuid
 from typing import Tuple, Dict, Any
 
@@ -32,23 +35,19 @@ class NewCoordinatorAgent:
     def process_user_input(self,user_input: str) -> Tuple[str, Dict[str, Any]]:
         """Main conversation processing method -  all inputs go through Router first"""
         try:
-            # Step 1: Check cancle intent BEFORE routing
-            if self._is_cancle_intent(user_input, None):
-                response = self._handle_cancle_request(user_input, None)
+            if self._is_cancel_intent(user_input, None):
+                response = self._handle_cancel_request(user_input, None)
                 self.shared_memory.add_to_history(user_input, response, "coordinator")
                 return response, self.shared_memory.to_dict()
             
-            # Step 2: Router Agent analyzes and routes the input
             conversation_context = self.shared_memory.get_context_summary()
             route_decision = self.router_agent.route_conversation(user_input, conversation_context)
 
-            # Step 3: Double-check cancle intent from router decision as backup
             if self._is_cancel_intent(user_input, route_decision):
                 response = self._handle_cancel_request(user_input, route_decision)
                 self.shared_memory.add_to_history(user_input, response, "coordinator")
                 return response, self.shared_memory.to_dict()
 
-            # Check if human intervention is needed
             if route_decision.agent == "human" or self.shared_memory.needs_human_intervention:
                 return self._handle_human_intervention(user_input, route_decision)
 
@@ -119,11 +118,11 @@ class NewCoordinatorAgent:
 
                 if result.added_items:
                     order_summary = self.order_agent.get_order_summary()
-                    response_parts.append(f"\n📋 Current order total: ${order_summary['totals']['total']:.2f}")
+                    response_parts.append(f"\nCurrent order total: ${order_summary['totals']['total']:.2f}")
                 
                 if result.failed_items:
                     failed_names = [item.get("requested_name", "") for item in result.failed_items]
-                    response_parts.append(f"\n⚠️ Couldn't find: {', '.join(failed_names)}")
+                    response_parts.append(f"\nCouldn't find: {', '.join(failed_names)}")
                     response_parts.append("Would you like to see our menu for available items?")
                 
                 return "\n".join(response_parts)

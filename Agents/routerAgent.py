@@ -48,7 +48,7 @@ class RouterAgent:
         # Create the main routing prompt
         self.routing_prompt = PromptTemplate(
             input_variables=["user_input", "conversation_context", "menu_items"],
-            partial_variables={"format_instructions": self.route_parser.get_format_instructions()},
+            partial_variables={"format_instructions": self.router_parser.get_format_instructions()},
             template="""
 You are an expert Router Agent for an AI restaurant assistant. Your job is to analyze user input and make intelligent routing decisions.
 
@@ -111,7 +111,7 @@ Be intelligent about context and provide structured, actionable routing decision
         # Simplified item extraction prompt for multiple items
         self.item_extraction_prompt = PromptTemplate(
             input_variables=["user_input", "menu_items"],
-            partial_variables={"format_instructions": self.multi_item_parser.get_format_instructions()},
+            partial_variables={"format_instructions": self.multiple_item_parser.get_format_instructions()},
             template="""
 You are an expert at extracting menu items from natural language input.
 

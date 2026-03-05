@@ -57,9 +57,9 @@ class MenuAgent:
         recommendations = get_chef_recommendations(self.menu)
         popular = get_popular_items(self.menu)
         
-        response = "🌟 **CHEF'S RECOMMENDATIONS** 🌟\n"
+        response = "**CHEF'S RECOMMENDATIONS**\n"
         response += format_menu_display(recommendations)
-        response += "\n🔥 **POPULAR ITEMS** 🔥\n"
+        response += "\n **POPULAR ITEMS** \n"
         response += format_menu_display(popular)
         
         return response

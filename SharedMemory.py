@@ -2,52 +2,47 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 @dataclass
 class SharedMemory:
     """Central Memory for all the agents to maintain conversation state"""
 
-    # Customer Intent and State
     customer_intent: str = "GREETING"  # GREETING, BROWSING, ORDERING, FINALIZING, DELIVERY_METHOD, COMPLETED
     conversation_stage: str = "greeting"  # greeting, browsing, ordering, finalizing, awaiting_delivery, completed
     needs_human_intervention: bool = False
     intervention_reason: str = ""
 
-    # Order information
     current_order: List[Dict[str, Any]] = field(default_factory=list)
-    current_status: str = "IN_PROGRESS" # IN_PROGRESS, COMPLETE, CONFIRMED
+    order_status: str = "IN_PROGRESS" # IN_PROGRESS, COMPLETE, CONFIRMED
     order_total: float = 0.0
     order_id: str = ""
 
-    # Customer Information
     customer_name: str = ""
     delivery_details: Dict[str, str] = field(default_factory = dict)
     customer_preferences: Dict[str, Any] = field(default_factory=dict)
     delivery_method: str = ""  # "delivery" or "pickup"
 
-    #Conversation Context
     last_agent: str = ""
     last_action: str = ""
     conversation_history: List[Dict[str, str]] = field(default_factory=list)
     pending_clarifications: List[str] = field(default_factory=list)
     
-    # Upselling and Recommendations
     upsell_attempts: int = 0
     max_upsell_attempts: int = 2
     suggested_items: List[str] = field(default_factory=list)
     declined_suggestions: List[str] = field(default_factory=list)
     
-    # Menu Context
     menu_displayed: bool = False
     current_category: str = ""
     browsing_preferences: Dict[str, Any] = field(default_factory=dict)
     
-    # Error Handling
     error_count: int = 0
     last_error: str = ""
     fallback_mode: bool = False
     
-    # Timestamps
     session_start: datetime = field(default_factory=datetime.now)
     last_activity: datetime = field(default_factory=datetime.now)
 
