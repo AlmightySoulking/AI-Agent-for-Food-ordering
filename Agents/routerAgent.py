@@ -173,7 +173,7 @@ Extract ALL items mentioned, not just one.
     
     def route_conversation(self, user_input: str, conversation_context: dict = None) ->RouteDecision:
         """Main routing function - analyzes input and returns structured routing decision"""
-        sanitize_input = sanitize_input(user_input)
+        sanitized_input = sanitize_input(user_input)
 
         if conversation_context is None:
             conversation_context = {
@@ -187,19 +187,19 @@ Extract ALL items mentioned, not just one.
             context_str = json.dumps(conversation_context, indent = 2)
             route_decision: RouteDecision = self.routing_chain.invoke(
                 {
-                    "user_input": sanitize_input,
+                    "user_input": sanitized_input,
                     "conversation_context": context_str,
                     "menu_items": menu_context
                 }
             )
             if route_decision.agent == "order":
-                extracted_items = self.extract_multiple_items(sanitize_input)
+                extracted_items = self.extract_multiple_items(sanitized_input)
                 route_decision.extracted_items = extracted_items
 
             return route_decision
 
         except Exception as e:
-            return self._fallback_routing(sanitize_input, conversation_context)
+            return self._fallback_routing(sanitized_input, conversation_context)
 
     def extract_multiple_items(self, user_input: str) -> List[Dict[str, Any]]:
         """Extract multiple items with detailed analysis using simplified approach"""
@@ -355,7 +355,7 @@ Extract ALL items mentioned, not just one.
             agent = agent,
             confidence = 0.6,
             user_intent = intent,
-            extracted_items = extract_items,
+            extracted_items = extracted_items,
             needs_clarification = False
         )
     

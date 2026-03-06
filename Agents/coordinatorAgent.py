@@ -103,7 +103,7 @@ class NewCoordinatorAgent:
 
         # if router classified it as modification, apply modifications deterministically
         if route_decision.user_intent == "MODIFY_ORDER":
-            modification_result = self.order_agent.handle_ordeer_modification(user_input)
+            modification_result = self.order_agent.handle_order_modification(user_input)
 
             if self.shared_memory.conversation_stage == "awaiting_delivery":
                 return f"{modification_result}\n\nShall we proceed with delivery or pickup?"
@@ -328,12 +328,6 @@ class NewCoordinatorAgent:
         self.shared_memory.conversation_stage = "greeting"
         return "Your order has been cancelled. Would you like to start a new order or see the menu?"
 
-    def reset_conversation(self):
-        """Reset conversation state for new session"""
-        self.shared_memory = SharedMemory()
-        self.session_id = str(uuid.uuid4())
-        if os.getenv("DEBUG_MODE", "false").lower() == "true":
-            print("Conversation reset. Starting fresh!")
 
     def get_conversation_state(self) -> Dict[str, Any]:
         """Get current conversation state for monitoring"""

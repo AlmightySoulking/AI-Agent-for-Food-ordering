@@ -153,39 +153,30 @@ Provide a structured response that's both informative and conversational.
         """
         Main order processing function that uses pre-extracted items from Router Agent
         """
-        try:
-            menu_context = self._format_menu_for_context()
-            current_order_str = json.dumps(self.shared_memory.current_order, indent=2)
-            extracted_items_str = json.dumps(extracted_items, indent=2)
+        
+        menu_context = self._format_menu_for_context()
+        current_order_str = json.dumps(self.shared_memory.current_order, indent=2)
+        extracted_items_str = json.dumps(extracted_items, indent=2)
             
-            result: OrderProcessingResult = self.order_chain.invoke({
+        result: OrderProcessingResult = self.order_chain.invoke({
                 "customer_input": customer_input,
                 "extracted_items": extracted_items_str,
                 "current_order": current_order_str,
                 "menu_context": menu_context
             })
             
-            normalized_added: List[Dict[str, Any]] = []
-            for raw_item in result.added_items:
+        normalized_added: List[Dict[str, Any]] = []
+        for raw_item in result.added_items:
                 normalized = self._normalize_order_item(raw_item)
                 if normalized:
                     self.shared_memory.add_order_item(normalized)
                     normalized_added.append(normalized)
             
-            try:
-                result.added_items = normalized_added
-            except Exception:
-                pass
-            
-            if normalized_added:
+        result.added_items = normalized_added
+        if normalized_added:
                 self.shared_memory.set_customer_intent("ORDERING", "Items added to order")
+        return result
             
-            return result
-            
-        except Exception as e:
-            if os.getenv("DEBUG_MODE", "false").lower() == "true":
-                print(f"Order processing error: {e}")
-            return self._fallback_order_processing(customer_input, extracted_items)
     def _fallback_order_processing(self, customer_input: str, extracted_items: List[Dict[str, Any]]) -> OrderProcessingResult:
         """Fallback order processing when AI fails"""
         added_items = []
@@ -275,7 +266,7 @@ Provide a structured response that's both informative and conversational.
                         return item
         
         return None
-    def handle_order_mmodification(self, customer_input: str) -> str:
+    def handle_order_modification(self, customer_input: str) -> str:
         """
         Handle order modifications like removing or changing quantities.
         This function now applies changes to shared memory before generating a response
@@ -436,7 +427,7 @@ Provide a clear response about what you've changed and show the updated order.
             }
         
         subtotal = sum(item.get("price",0) * item.get("quantity",1) for item in self.shared_memory.current_order)
-        tax = subtotal * 0.88
+        tax = subtotal * 0.08
         total = subtotal + tax
 
         return {
@@ -452,7 +443,7 @@ Provide a clear response about what you've changed and show the updated order.
                 }
                 for item in self.shared_memory.current_order
             ],
-            'total':{
+            'totals':{
                 'subtotal': subtotal,
                 'tax': tax,
                 'total': total

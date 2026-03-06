@@ -26,7 +26,7 @@ upsell_prompt = PromptTemplate(
 )
 
 MENU_AGENT_PROMPT = """
-You are a knowledgeable menu assistant for AI Bistro. Your role is to help customers understand our menu offerings and make informed choices.
+You are a knowledgeable menu assistant for a restaurant. Your role is to help customers understand our menu offerings and make informed choices.
 
 Current Menu: {menu}
 Customer Query: {customer_input}

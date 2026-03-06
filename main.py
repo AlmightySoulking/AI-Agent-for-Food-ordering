@@ -15,7 +15,7 @@ class RestaurantAIAgent:
         print("\n" + "="*60)
         print("Restaurant AI Agent")
         print("="*60)
-        print("\nCommands: /help, /menu, /reset, /debug, /state, quit")
+        print("\nCommands: /help, /menu, /reset, /state, quit")
 
     def start_conversation(self):
         """Start an interactive conversation with the customer"""
@@ -28,7 +28,7 @@ class RestaurantAIAgent:
                 user_input = input("\nYou: ").strip()
                 
                 if user_input.lower() in ['quit', 'exit']:
-                    print("\nAI: Thanks for visiting AI Bistro. Have a great day!")
+                    print("\nAI: Thanks for us. Have a great day!")
                     break
                 
                 if not user_input:
@@ -44,8 +44,6 @@ class RestaurantAIAgent:
                 
                 print(f"\nAI: {response}")
                 
-                if self.debug_mode:
-                    self._show_debug_info(conversation_state)
                 
                 if conversation_state.get("customer_intent") == "COMPLETED":
                     details = self.get_order_details()
@@ -61,7 +59,7 @@ class RestaurantAIAgent:
                         response, _ = self.coordinator.process_user_input("hello")
                         print(f"\nAI: {response}")
                     else:
-                        print("\nAI: Thank you for choosing AI Bistro!")
+                        print("\nAI: Thank you for choosing Us!")
                         break
                 
                 if conversation_state.get("needs_intervention"):
@@ -85,7 +83,6 @@ class RestaurantAIAgent:
             print("  /menu   - Show the menu")
             print("  /state  - Show current conversation state")
             print("  /reset  - Reset the conversation")
-            print("  /debug  - Toggle debug info display")
             print("  quit    - Exit the assistant")
             print("="*60)
             return True
@@ -104,13 +101,7 @@ class RestaurantAIAgent:
             response, _ = self.coordinator.process_user_input("hello")
             print(f"\nAI: {response}")
             return True
-        
-        if name == "/debug":
-            self.debug_mode = not self.debug_mode
-            status = "ON" if self.debug_mode else "OFF"
-            print(f"Debug mode: {status}")
-            return True
-        
+                
         if name == "/state":
             state = self.coordinator.shared_memory.to_dict()
             self._show_debug_info(state)
