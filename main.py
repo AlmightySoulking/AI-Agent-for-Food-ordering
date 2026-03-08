@@ -28,7 +28,7 @@ class RestaurantAIAgent:
                 user_input = input("\nYou: ").strip()
                 
                 if user_input.lower() in ['quit', 'exit']:
-                    print("\nAI: Thanks for us. Have a great day!")
+                    print("\nAI: Thanks for joining us. Have a great day!")
                     break
                 
                 if not user_input:

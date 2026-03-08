@@ -43,7 +43,7 @@ Always be helpful and make the dining experience special for our customers.
 """
 
 MENU_DISPLAY_PROMPT = """
-Welcome to AI Bistro! Here's our delicious menu:
+Welcome to AI Restaurant manager! Here's our delicious menu:
 
 {menu_items}
 
